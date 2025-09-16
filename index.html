@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>シューティング(ボス戦付き)</title>
+<style>
+  body { margin: 0; overflow: hidden; background: black; }
+  canvas { display: block; margin: 0 auto; }
+</style>
+</head>
+<body>
+<canvas id="gameCanvas" width="480" height="640"></canvas>
+
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+// 画像
+const playerImg = new Image(); playerImg.src = "player.png";
+const missileImg = new Image(); missileImg.src = "missile.png";
+const enemyImg = new Image(); enemyImg.src = "enemy.png";
+const bossImg = new Image();  bossImg.src = "boss.png";
+
+// 自機
+let player = { x: 200, y: 500, w: 48, h: 48, speed: 5, shootCooldown: 0 };
+
+// オブジェクト
+let missiles = [];
+let enemies = [];
+let particles = [];
+let boss = null;
+let bossBullets = [];
+
+// スコア
+let score = 0;
+let gameOver = false;
+let gameClear = false;
+
+// 入力
+let keys = {};
+document.addEventListener("keydown", e => keys[e.code] = true);
+document.addEventListener("keyup", e => keys[e.code] = false);
+
+// ミサイル発射
+function shoot() {
+  missiles.push({ x: player.x + player.w/2 - 8, y: player.y, w: 16, h: 32 });
+}
+
+// 敵生成
+function spawnEnemy() {
+  let x = Math.random() * (canvas.width - 48);
+  enemies.push({ x: x, y: -50, w: 48, h: 48, speed: 2, angle: 0 });
+}
+
+// 衝突判定
+function isHit(a, b) {
+  return (a.x < b.x + b.w &&
+          a.x + a.w > b.x &&
+          a.y < b.y + b.h &&
+          a.y + a.h > b.y);
+}
+
+// パーティクル生成
+function createParticle(x, y) {
+  particles.push({
+    x: x, y: y,
+    size: Math.random()*4+2,
+    alpha: 1,
+    life: 30,
+    color: ["orange","red","yellow"][Math.floor(Math.random()*3)]
+  });
+}
+
+// パーティクル更新
+function updateParticles() {
+  for (let i = 0; i < particles.length; i++) {
+    let p = particles[i];
+    p.y += 1;
+    p.alpha -= 0.03;
+    p.life--;
+    if (p.life <= 0 || p.alpha <= 0) {
+      particles.splice(i,1);
+      i--;
+    }
+  }
+}
+
+// バーナー描画
+function drawThruster(x, y, size=12) {
+  let flameLen = size + Math.random()*6;
+  ctx.beginPath();
+  ctx.fillStyle = "orange";
+  ctx.moveTo(x, y);
+  ctx.lineTo(x - 4, y + flameLen);
+  ctx.lineTo(x + 4, y + flameLen);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.fillStyle = "yellow";
+  ctx.moveTo(x, y);
+  ctx.lineTo(x - 2, y + flameLen/2);
+  ctx.lineTo(x + 2, y + flameLen/2);
+  ctx.closePath();
+  ctx.fill();
+}
+
+// メインループ
+function gameLoop() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (gameOver) {
+    ctx.fillStyle = "white";
+    ctx.font = "36px sans-serif";
+    ctx.fillText("GAME OVER", 120, 300);
+    return;
+  }
+  if (gameClear) {
+    ctx.fillStyle = "white";
+    ctx.font = "36px sans-serif";
+    ctx.fillText("GAME CLEAR!!", 100, 300);
+    ctx.font = "24px sans-serif";
+    ctx.fillText("SCORE: " + score, 160, 350);
+    return;
+  }
+
+  // 入力処理
+  if (keys["ArrowLeft"] && player.x > 0) player.x -= player.speed;
+  if (keys["ArrowRight"] && player.x < canvas.width - player.w) player.x += player.speed;
+  if (keys["ArrowUp"] && player.y > 0) player.y -= player.speed;
+  if (keys["ArrowDown"] && player.y < canvas.height - player.h) player.y += player.speed;
+  if (keys["Space"]) {
+    if (player.shootCooldown <= 0) {
+      shoot();
+      player.shootCooldown = 15;
+    }
+  }
+  if (player.shootCooldown > 0) player.shootCooldown--;
+
+  // ミサイル更新
+  for (let i = 0; i < missiles.length; i++) {
+    missiles[i].y -= 8;
+    createParticle(missiles[i].x+missiles[i].w/2, missiles[i].y+missiles[i].h);
+    if (missiles[i].y < -missiles[i].h) {
+      missiles.splice(i, 1);
+      i--;
+    }
+  }
+
+  // 通常敵（ボスがいない間だけ出す）
+  if (!boss && Math.random() < 0.02) spawnEnemy();
+
+  enemies.forEach(e => {
+    e.y += e.speed;
+    e.angle += 0.05;
+  });
+
+  // 衝突判定（ミサイル vs 敵）
+  for (let i = 0; i < missiles.length; i++) {
+    for (let j = 0; j < enemies.length; j++) {
+      if (isHit(missiles[i], enemies[j])) {
+        missiles.splice(i,1);
+        enemies.splice(j,1);
+        score += 100;
+        i--;
+        break;
+      }
+    }
+  }
+
+  // 衝突判定（自機 vs 敵）
+  for (let j = 0; j < enemies.length; j++) {
+    if (isHit(player, enemies[j])) {
+      gameOver = true;
+    }
+  }
+
+  // スコアでボス登場
+  if (score >= 2000 && !boss) {
+    boss = { x: 120, y: 50, w: 240, h: 120, hp: 1000, dir: 2, shootCooldown: 0 };
+  }
+
+  // ボス処理
+  if (boss) {
+    // 移動
+    boss.x += boss.dir;
+    if (boss.x <= 0 || boss.x + boss.w >= canvas.width) boss.dir *= -1;
+
+    // 弾発射
+    if (boss.shootCooldown <= 0) {
+      bossBullets.push({ x: boss.x+boss.w/2-5, y: boss.y+boss.h, w: 10, h: 20, speed: 4 });
+      boss.shootCooldown = 60;
+    }
+    boss.shootCooldown--;
+
+    // 弾更新
+    for (let i=0; i<bossBullets.length; i++) {
+      bossBullets[i].y += bossBullets[i].speed;
+      if (bossBullets[i].y > canvas.height) {
+        bossBullets.splice(i,1);
+        i--;
+      }
+    }
+
+    // 衝突判定（ミサイル vs ボス）
+    for (let i=0; i<missiles.length; i++) {
+      if (isHit(missiles[i], boss)) {
+        boss.hp -= 20;
+        missiles.splice(i,1);
+        i--;
+        if (boss.hp <= 0) {
+          boss = null;
+          gameClear = true;
+        }
+      }
+    }
+
+    // 衝突判定（自機 vs ボス or 弾）
+    if (isHit(player, boss)) gameOver = true;
+    for (let i=0; i<bossBullets.length; i++) {
+      if (isHit(player, bossBullets[i])) {
+        gameOver = true;
+      }
+    }
+  }
+
+  // パーティクル更新
+  updateParticles();
+
+  // 描画
+  ctx.drawImage(playerImg, player.x, player.y, player.w, player.h);
+  drawThruster(player.x+player.w/2, player.y+player.h);
+
+  missiles.forEach(m => ctx.drawImage(missileImg, m.x, m.y, m.w, m.h));
+  enemies.forEach(e => {
+    ctx.save();
+    ctx.translate(e.x+e.w/2, e.y+e.h/2);
+    ctx.rotate(e.angle);
+    ctx.drawImage(enemyImg, -e.w/2, -e.h/2, e.w, e.h);
+    ctx.restore();
+  });
+
+  // ボス描画
+  if (boss) {
+    ctx.drawImage(bossImg, boss.x, boss.y, boss.w, boss.h);
+    drawThruster(boss.x+boss.w/2, boss.y+boss.h);
+
+    // HPバー
+    ctx.fillStyle = "red";
+    ctx.fillRect(100, 20, 280, 10);
+    ctx.fillStyle = "lime";
+    ctx.fillRect(100, 20, (boss.hp/1000)*280, 10);
+
+    bossBullets.forEach(b => {
+      ctx.fillStyle = "purple";
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+    });
+  }
+
+  particles.forEach(p => {
+    ctx.globalAlpha = p.alpha;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI*2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  });
+
+  // スコア
+  ctx.fillStyle = "white";
+  ctx.font = "20px sans-serif";
+  ctx.fillText("SCORE: " + score, 10, 30);
+
+  requestAnimationFrame(gameLoop);
+}
+
+gameLoop();
+</script>
+</body>
+</html>
